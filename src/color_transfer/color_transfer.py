@@ -9,6 +9,8 @@ def color_transfer_histogram(content_img, style_img):
     Returns:
         transferred_img : BGR content image with color distribution of style image 
     """
+    # Convert to uint8
+    content_img = content_img.astype(np.uint8)
     
     # Convert BGR to RGB
     content_img = cv2.cvtColor(content_img, cv2.COLOR_BGR2RGB)

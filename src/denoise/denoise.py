@@ -2,7 +2,6 @@ import skimage.io as io
 import numpy as np
 import cv2
 from skimage.restoration import *
-from commonfunctions import *
 import numpy as np
 
 # img: RGB image to apply the filter t.
