@@ -5,23 +5,40 @@ import time
 from sklearn.feature_extraction.image import extract_patches_2d
 from skimage.util import random_noise
 from sklearn.neighbors import NearestNeighbors
-from utils.irls import IRLS
 from sklearn.decomposition import PCA
-from color_transfer.color_transfer import color_transfer_histogram, color_transfer_lab,color_transfer_mean_std
-from denoise.denoise import denoise
 import skimage.io as io
 import matplotlib.pyplot as plt
-from segmentation.segmentation import watershed_segmentation, canny_segmentation , kmeans_segmentation , otsu_segmentation_binary_mask
-from utils.pca import *
+from color_transfer.color_transfer import color_transfer_histogram, color_transfer_lab, color_transfer_mean_std
+from segmentation.segmentation import kmeans_segmentation, watershed_segmentation, canny_segmentation, otsu_segmentation_binary_mask
+from utils.irls import IRLS
+from denoise.denoise import denoise
+from timeit import default_timer
+
 
 LMAX = 3
 IMG_SIZE = 400
-PATCH_SIZES = np.array([21, 13, 9, 5])
-SAMPLING_GAPS = np.array([28, 18, 8, 5, 3])
-IALG = 1
-IRLS_it = 1
+PATCH_SIZES = np.array([33, 21, 13, 9])
+SAMPLING_GAPS = np.array([28, 18, 8, 5])
+IALG = 5
+IRLS_it = 3
 IRLS_r = 0.8
 PADDING_MODE = 'edge'
+content_weight = 5
+
+def mat2gray(image):
+    # Ensure that the image is of type float
+    image = image.astype(float)
+
+    # Normalize the image to the range [0, 1]
+    min_val = np.min(image)
+    max_val = np.max(image)
+
+    if min_val == max_val:
+        return np.zeros_like(image)
+    
+    normalized_image = (image - min_val) / (max_val - min_val)
+    
+    return normalized_image
 
 # Show the figures / plots inside the notebook
 def show_images(images,titles=None):
@@ -49,40 +66,7 @@ def build_gaussian_pyramid(img, L):
         img_arr.append(cv2.pyrDown(img_arr[-1].astype(np.float32)).astype(np.float32))
     return img_arr
 
-def solve_irls(X, X_patches_raw, p_index, style_patches, neighbors , projection_matrix):
-    p_size = PATCH_SIZES[p_index]
-    sampling_gap = SAMPLING_GAPS[p_index]
-    current_size = X.shape[0]
-    # Extracting Patches
-    X_patches = X_patches_raw.reshape(-1, p_size * p_size * 3)
-    npatches = X_patches.shape[0]
-    # PCA Projection
-    if p_size <= 33:
-        X_patches = project(X_patches, projection_matrix)  # Projecting X to same dimention as style patches
-    # Computing Nearest Neighbors
-    distances, indices = neighbors.kneighbors(X_patches)
-    distances += 0.0001
-    # Computing Weights
-    weights = np.power(distances, IRLS_r - 2)
-    # Patch Accumulation
-    R = np.zeros((current_size, current_size, 3), dtype=np.float32)
-    Rp = extract_patches_2d(R, patch_size=(p_size, p_size),max_patches=0.95 )
-    X[:] = 0
-    t = 0
-    for t1 in range(X_patches_raw.shape[1]):
-        for t2 in range(X_patches_raw.shape[2]):
-            nearest_neighbor = style_patches[indices[t, 0]]
-            X_patches_raw = X_patches_raw.astype(np.float64)
-            weights = weights.astype(np.float64)
-            X_patches_raw += nearest_neighbor * weights[t]
-            Rp += 1 * weights[t]
-            t = t + 1
-    R = R.astype(np.float32)
-    X = X.astype(np.float32)
-    R += 0.0001  # to avoid dividing by zero.
-    X /= R
-
-def style_transfer(content, style, segmentation_mask, sigma_r=0.17, sigma_s=15):
+def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
     """
     Performs style transfer between content and style images.
     Args:
@@ -98,81 +82,109 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.17, sigma_s=15):
     Returns:
         X: Estimated X after style transfer
     """
-    content_arr = build_gaussian_pyramid(content, LMAX)
-    style_arr = build_gaussian_pyramid(style, LMAX)
-    segm_arr = build_gaussian_pyramid(segmentation_mask, LMAX)
+    start_time = default_timer() # initialize the timer to measure performance
+    ## Build gaussian pyramid
+    print("Building Pyramids ...")
+    content_layers = []
+    style_layers = []
+    seg_layers = []
+    content_layers.append(content)
+    style_layers.append(style)
+    seg_layers.append(segmentation_mask)
+    for iter in range(LMAX-1, 0, -1):
+        content_layers.append(cv2.pyrDown(content_layers[-1].astype(np.float32)).astype(np.float32))
+        style_layers.append(cv2.pyrDown(style_layers[-1].astype(np.float32)).astype(np.float32))
+        seg_layers.append(cv2.pyrDown(seg_layers[-1].astype(np.float32)).astype(np.float32))    
+    content_layers.reverse()      
+    style_layers.reverse()  
+    seg_layers.reverse()  
     
+
     # Initialize X with the content + strong noise.
-    X = random_noise(content_arr[LMAX - 1], mode='gaussian', var=50)
+    X = random_noise(content_layers[0], mode='gaussian', var=20)
     
-    # Fusion of content 
-    fusion_content =[]
-    fusion_style = []
-    
-    # Loop over all levels of the pyramid
-    for i in range(LMAX):
-        sx, sy = segm_arr[i].shape
-        curr_segm = segm_arr[i].reshape(sx, sy, 1)
-        fusion_content.append(curr_segm * content_arr[i])
-        fusion_style.append(1.0 / (curr_segm + 1))
+    # Starting the style transfer
         
     print('Starting Style Transfer..')
-    for L in range(LMAX - 1, -1, -1):  # over scale L
+    for L in range(LMAX):
         print('Scale ', L)
-        current_size = style_arr[L].shape[0]
-        style_L_sx, style_L_sy, _ = style_arr[L].shape
-        X = random_noise(X, mode='gaussian', var=20 / 250.0)
+        # Add some extra noise to the output
+        X = random_noise(X, mode='gaussian', var=0.1)
+
         for n in range(PATCH_SIZES.size):
             p_size = PATCH_SIZES[n]
             print('Patch Size', p_size)
-            npatchx = int((style_L_sx - p_size) / SAMPLING_GAPS[n] + 1)	
-            # Pad the image to avoid boundary artifacts
-            padding = p_size - (style_L_sx - npatchx * SAMPLING_GAPS[n])
-            padding_arr = ((0, padding), (0, padding), (0, 0))
-            current_style = pad(style_arr[L], padding_arr, mode=PADDING_MODE)
-            X = pad(X, padding_arr, mode=PADDING_MODE)
-            const1 = pad(fusion_content[L], padding_arr, mode=PADDING_MODE)
-            const2 = pad(fusion_style[L], padding_arr, mode=PADDING_MODE)
-            style_patches = extract_patches_2d(current_style, patch_size=(p_size, p_size),max_patches=0.95 )
             
-            # Preparing for NN
-            style_patches = style_patches.reshape(-1, p_size * p_size * 3)
-            njobs = 1
-            if (L == 0) or (L == 1 and p_size <= 13):
-                njobs = -1
-                
+            # pad content, style, segmentation mask and X for correct style mapping
+            original_size = style_layers[L].shape[0]
+            num_patches = int((original_size - p_size) / SAMPLING_GAPS[n] + 1)	
+            pad_size = p_size - (original_size  - num_patches * SAMPLING_GAPS[n])
+            pad_arr = ((0, pad_size), (0, pad_size), (0, 0))
+            # pad all inputs
+            current_style = pad(style_layers[L], pad_arr, mode='edge')
+            current_seg = pad(seg_layers[L].reshape(seg_layers[L].shape[0], seg_layers[L].shape[1], 1), pad_arr, mode='edge')
+            current_content = pad(content_layers[L], pad_arr, mode='edge')
+            X = pad(X, pad_arr, mode='edge')
+            
+            # Extracting Style patches and computing nearest neighbors
+            style_patches = extract_patches_2d(current_style, patch_size=(p_size, p_size))
+            # Sub Sampling
+            style_patches = style_patches[::SAMPLING_GAPS[n], :, :]
+            style_features = style_patches.reshape(-1, p_size * p_size * 3)
             projection_matrix = 0
             # for small patch sizes perform PCA
             if p_size <= 33:
-                new_style_patches, projection_matrix = pca(style_patches)
-                neighbors = NearestNeighbors(n_neighbors=1, p=2, n_jobs=njobs).fit(new_style_patches)
+                n_comp = min(100,style_features.shape[0])
+                proj_style_features = PCA (n_components=n_comp, svd_solver='auto').fit_transform(style_features)
+                neighbors = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(proj_style_features )
             else:
-                neighbors = NearestNeighbors(n_neighbors=1, p=2, n_jobs=njobs).fit(style_patches)
-            style_patches = style_patches.reshape((-1, p_size, p_size, 3))
+                neighbors = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(style_features)
             
-            for k in range(IALG):
+            # new_style_patches = PCA(n_components=0.95, svd_solver='full').fit_transform(style_patches)
+            # neighbors = NearestNeighbors(n_neighbors=1, p=2, n_jobs=njobs).fit(new_style_patches)
+            # new_style_patches = new_style_patches.reshape((-1, p_size, p_size, 3))
+            
+            for iter in range(IALG):
+                print("Iteration",iter," ...")
                 # Steps 1 & 2: Patch-Extraction and and Robust Patch Aggregation
-                X_patches_raw = extract_patches_2d(X, patch_size=(p_size, p_size),max_patches=0.95 )
-                for i in range(IRLS_it):
-                    solve_irls(X, X_patches_raw, n, style_patches, neighbors,projection_matrix)
+                X_patches = extract_patches_2d(X, patch_size=(p_size, p_size))
+                # Sub Sampling
+                X_patches = X_patches[::SAMPLING_GAPS[n], :, :]
+                X = IRLS(X, X_patches, style_patches, neighbors, IRLS_it, SAMPLING_GAPS[n], IRLS_r, p_size , projection_matrix)
+                
                 # Step 3: Content Fusion
-                X = const2 * (X + const1)
+                X = (1.0 / (content_weight * current_seg + 1)) * (X + (content_weight * current_seg * current_content))
+                
                 # Step 4: Color Transfer
-                X = color_transfer_histogram(X, style)
+                X = color_transfer_histogram(X, current_style)
+                
                 # Step 5: Denoising
                 X = denoise(X, sigma_r, sigma_s)
-            # Discard the padding
-            X = X[0:style_L_sx, 0:style_L_sy, :]
+                
+            # Original size
+            X = X[:original_size, :original_size, :]
+            
+            
         # Upsample X to the next level of the pyramid
-        if L > 0:
-            sizex, sizey, _ = content_arr[L - 1].shape
-            X = cv2.resize(X, (sizex, sizey))
+        if (L != LMAX-1):    
+            X = cv2.resize(X.astype(np.float32), (content_layers[L+1].shape[0], content_layers[L+1].shape[1])).astype(np.float32)
+        
+            
+    print("Stylization Done!")
+    print("Stylization time = ", default_timer()-start_time, " Seconds")
+    
+    
+    
     return X
+
+
+
+
 
 # Read content and style images
 def main(segmentation_mode = 'kmeans' , color_transfer_mode = 'histogram' , denoise_flag = True):
-    content_img = io.imread('./input/content/eagles.jpg')
-    style_img = io.imread('./input/style/van_gogh.jpg')
+    content_img = io.imread('input/content/house2small.jpg')
+    style_img = io.imread('input/style/derschrei.jpg')
     
     # Segmentation Modes (Kmeans is Default)
     if segmentation_mode == 'watershed':

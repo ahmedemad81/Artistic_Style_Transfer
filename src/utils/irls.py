@@ -1,15 +1,14 @@
 import numpy as np
 from sklearn.feature_extraction.image import extract_patches_2d
-from sklearn.neighbors import NearestNeighbors
 from sklearn.decomposition import PCA
 
-def IRLS(X, X_patches, style_patches, neighbors, patch_size, iterations , sub_sampling , r):
+def IRLS(X, X_patches, style_patches, neighbors, iterations , sub_sampling , r , p_size ):
     """
     Performs IRLS robust optimization between content and style patches.
     Args:
-        X: Content before optimization
-        X_patches: Content patches
-        style_patches: Style patches
+        X: Content before optimization 
+        X_patches: Content patches (2D Patches)
+        style_patches: Style patches (2D Patches)
         neighbors: Number of neighbors to consider
         patch_size: Size of patch
         iterations: Number of iterations
@@ -18,65 +17,51 @@ def IRLS(X, X_patches, style_patches, neighbors, patch_size, iterations , sub_sa
     Returns:
         X: Estimated X after IRLS optimization
     """
-    
     for i in range(iterations):
-        # Reshape the patches to 2D array 
-        x_features = X_patches.reshape(-1, X_patches.shape[3] * X_patches.shape[3] * 3) 
-        
-        # # PCA projection to reduce the dimensionality of the feature vectors
-        # # if patch_size <= 21: (Can be experimented with)
-        # # Choose the number of components to keep such that 95% of the variance is retained
-        # threshold = 0.95 # As mentioned in the paper
-        # # When n_components is between 0 and 1, select the number of components such that the amount of variance 
-        # # that needs to be explained is greater than the percentage specified by n_components 
-        # # svd_solver is full to avoid the error
-        # pca = PCA(n_components=threshold, svd_solver='full')
-        # x_features = pca.fit_transform(x_features)
-        
-        # Reshape the style patches to 2D array
-        style_patches_iter = style_patches.reshape(-1, style_patches.shape[3] * style_patches.shape[3] * 3)
-        
-        # KNN
-        distances, indices = neighbors.kneighbors(x_features)
-        distances += 0.0001 # To avoid division by zero (Can be experimented with) (distance +=0.00001)
-        W = np.power(distances, r-2) # Robust statistic to reduce the effect of outliers
-        
-        # A is the matrix of weights
-        A = np.zeros((X.shape[0], X.shape[1], 3) , dtype=np.float64)
-        A_patches = extract_patches_2d(A, patch_size= [patch_size, patch_size])
-        
-        # Reset X (Why ?)
-        X.fill(0)
-
-        # Initialize cumulative index 
-        cumulative_index = 0
-
-        # Loop over all patches in X
-        for patch_index_1 in range(X_patches.shape[0]):
-            for patch_index_2 in range(X_patches.shape[1]):
-
-                # Find the nearest neighbor for the current patch
-                nearest_style_patch_flat = style_patches_iter[indices[cumulative_index, 0]].flatten()
-
-                # Reshape nearest_style_patch_flat into an array compatible with X_patches
-                nearest_style_patch = nearest_style_patch_flat.reshape(patch_size, patch_size, 3)
-
-                # Update the current patch based on the nearest neighbor and weights
-                X_patches[patch_index_1, patch_index_2] += nearest_style_patch * W[cumulative_index]
-
-                # Update cumulative weights
-                A_patches[patch_index_1, patch_index_2] += W[cumulative_index]
-
-                # Increment cumulative index
-                cumulative_index += 1
-
-
-
-        # Add a small constant to cum_mat to prevent division by zero
-        A += 0.0001
-
-        # Divide X by cum_mat
-        X /= A
-        
+        print('Iteration ', i)
+        current_size = X.shape[0]
+        # Extracting X patches
+        X_patches_raw = extract_patches_2d(X, patch_size=(p_size, p_size))
+        # Sub Sampling
+        X_patches = X_patches_raw[::sub_sampling, :, :]
+        X_patches = X_patches.reshape((-1, X_patches.shape[1] * X_patches.shape[2] * 3))
+        # PCA Projection
+        if p_size <= 33:
+            n_comp = min(100,style_patches.shape[0])
+            X_patches = PCA (n_components=n_comp, svd_solver='auto').fit_transform(X_patches)
             
+        style_patches_iter = style_patches # Style patches for current iteration
+        style_patches_iter = style_patches_iter.reshape((-1, style_patches.shape[1] *  style_patches.shape[2] * 3))
+        
+        # X_patches = PCA(n_components=0.95, svd_solver='full').fit_transform(X_patches)
+        # X_patches = X_patches.reshape((-1, p_size, p_size, 3))
+        # Computing Nearest Neighbors
+        distances, indices = neighbors.kneighbors(X_patches)
+        distances += 0.0001
+        # Computing Weights
+        weights = np.power(distances, r - 2)
+        # Patch Accumulation
+        R = np.zeros((current_size, current_size, 3), dtype=np.float32)
+        Rp = extract_patches_2d(R, patch_size=(p_size, p_size))
+        # Sub Sampling
+        Rp = Rp[::sub_sampling, :, :]
+        X[:] = 0
+        t = 0
+        for j in range(0, current_size - p_size + 1, sub_sampling):
+            for k in range(0, current_size - p_size + 1, sub_sampling):
+                nearest_neighbor_patch = style_patches_iter[indices[t]]
+                nearest_neighbor_patch = nearest_neighbor_patch.reshape((p_size, p_size, 3))
+                X = X.astype(np.float32)
+                weights = weights.astype(np.float32)
+                X[j:j + p_size, k:k + p_size, :] += nearest_neighbor_patch * weights[t]
+                Rp[j:j + p_size, k:k + p_size, :] += weights[t]
+                t += 1
+        
+        R = R.astype(np.float32)
+        X = X.astype(np.float32)
+        
+                
+        R += 0.0001  # to avoid dividing by zero.
+        X /= R
+        
     return X

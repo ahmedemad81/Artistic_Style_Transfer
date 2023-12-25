@@ -11,6 +11,7 @@ def color_transfer_histogram(content_img, style_img):
     """
     # Convert to uint8
     content_img = content_img.astype(np.uint8)
+    style_img = style_img.astype(np.uint8)
     
     # Convert BGR to RGB
     content_img = cv2.cvtColor(content_img, cv2.COLOR_BGR2RGB)
@@ -38,6 +39,10 @@ def color_transfer_histogram(content_img, style_img):
 
     # Convert back to BGR
     transferred_img = cv2.cvtColor(transferred_img, cv2.COLOR_RGB2BGR)
+    
+    # Clip values to be between 0 and 255
+    transferred_img = np.clip(transferred_img, 0, 255)
+    
 
     return transferred_img
 
