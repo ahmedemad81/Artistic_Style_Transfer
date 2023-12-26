@@ -26,8 +26,8 @@ def IRLS(X, X_patches, style_patches, neighbors, iterations , sub_sampling , r ,
         X_patches = X_patches_raw[::sub_sampling, :, :]
         X_patches = X_patches.reshape((-1, X_patches.shape[1] * X_patches.shape[2] * 3))
         # PCA Projection
-        if p_size <= 33:
-            n_comp = min(100,style_patches.shape[0])
+        if p_size <= 21:
+            n_comp = min(25,style_patches.shape[0])
             X_patches = PCA (n_components=n_comp, svd_solver='auto').fit_transform(X_patches)
             
         style_patches_iter = style_patches # Style patches for current iteration
@@ -39,7 +39,7 @@ def IRLS(X, X_patches, style_patches, neighbors, iterations , sub_sampling , r ,
         distances, indices = neighbors.kneighbors(X_patches)
         distances += 0.0001
         # Computing Weights
-        weights = np.power(distances, r - 2)
+        weights = np.power(distances, r - 2 )
         # Patch Accumulation
         R = np.zeros((current_size, current_size, 3), dtype=np.float32)
         Rp = extract_patches_2d(R, patch_size=(p_size, p_size))

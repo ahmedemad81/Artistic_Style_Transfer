@@ -17,28 +17,28 @@ from timeit import default_timer
 
 LMAX = 3
 IMG_SIZE = 400
-PATCH_SIZES = np.array([33, 21, 13, 9])
-SAMPLING_GAPS = np.array([28, 18, 8, 5])
-IALG = 5
-IRLS_it = 3
+PATCH_SIZES = np.array([33, 21, 13])
+SAMPLING_GAPS = np.array([28, 18, 9])
+IALG = 3
+IRLS_it = 8
 IRLS_r = 0.8
 PADDING_MODE = 'edge'
-content_weight = 5
+content_weight = 0.8
 
-def mat2gray(image):
-    # Ensure that the image is of type float
-    image = image.astype(float)
+# def mat2gray(image):
+#     # Ensure that the image is of type float
+#     image = image.astype(float)
 
-    # Normalize the image to the range [0, 1]
-    min_val = np.min(image)
-    max_val = np.max(image)
+#     # Normalize the image to the range [0, 1]
+#     min_val = np.min(image)
+#     max_val = np.max(image)
 
-    if min_val == max_val:
-        return np.zeros_like(image)
+#     if min_val == max_val:
+#         return np.zeros_like(image)
     
-    normalized_image = (image - min_val) / (max_val - min_val)
+#     normalized_image = (image - min_val) / (max_val - min_val)
     
-    return normalized_image
+#     return normalized_image
 
 # Show the figures / plots inside the notebook
 def show_images(images,titles=None):
@@ -66,7 +66,7 @@ def build_gaussian_pyramid(img, L):
         img_arr.append(cv2.pyrDown(img_arr[-1].astype(np.float32)).astype(np.float32))
     return img_arr
 
-def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
+def style_transfer(content, style, segmentation_mask, sigma_r=0.77, sigma_s=40):
     """
     Performs style transfer between content and style images.
     Args:
@@ -88,28 +88,41 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
     content_layers = []
     style_layers = []
     seg_layers = []
-    content_layers.append(content)
-    style_layers.append(style)
-    seg_layers.append(segmentation_mask)
-    for iter in range(LMAX-1, 0, -1):
-        content_layers.append(cv2.pyrDown(content_layers[-1].astype(np.float32)).astype(np.float32))
-        style_layers.append(cv2.pyrDown(style_layers[-1].astype(np.float32)).astype(np.float32))
-        seg_layers.append(cv2.pyrDown(seg_layers[-1].astype(np.float32)).astype(np.float32))    
+    # content_layers.append(content)
+    # style_layers.append(style)
+    # seg_layers.append(segmentation_mask)
+    # for iter in range(LMAX-1, 0, -1):
+    #     content_layers.append(cv2.pyrDown(content_layers[-1].astype(np.float32)).astype(np.float32))
+    #     style_layers.append(cv2.pyrDown(style_layers[-1].astype(np.float32)).astype(np.float32))
+    #     seg_layers.append(cv2.pyrDown(seg_layers[-1].astype(np.float32)).astype(np.float32))    
+    content_layers = build_gaussian_pyramid(content, LMAX)
+    style_layers = build_gaussian_pyramid(style, LMAX)
+    seg_layers = build_gaussian_pyramid(segmentation_mask, LMAX)
+    
+    
     content_layers.reverse()      
     style_layers.reverse()  
     seg_layers.reverse()  
     
 
     # Initialize X with the content + strong noise.
-    X = random_noise(content_layers[0], mode='gaussian', var=20)
-    
+    X = random_noise(content_layers[0], mode='gaussian', var=0.5)
+    # Set up Content Fusion constants.
+    fus_const1 = []
+    fus_const2 = []
+    for i in range(LMAX):
+        sx, sy = seg_layers[i].shape
+        curr_segm = seg_layers[i].reshape(sx, sy, 1)
+        fus_const1.append(curr_segm * content_layers[i])
+        fus_const2.append(1.0 / (curr_segm + 1))
+        
     # Starting the style transfer
         
     print('Starting Style Transfer..')
     for L in range(LMAX):
         print('Scale ', L)
         # Add some extra noise to the output
-        X = random_noise(X, mode='gaussian', var=0.1)
+        X = random_noise(X, mode='gaussian', var=0.2)
 
         for n in range(PATCH_SIZES.size):
             p_size = PATCH_SIZES[n]
@@ -117,14 +130,16 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
             
             # pad content, style, segmentation mask and X for correct style mapping
             original_size = style_layers[L].shape[0]
-            num_patches = int((original_size - p_size) / SAMPLING_GAPS[n] + 1)	
-            pad_size = p_size - (original_size  - num_patches * SAMPLING_GAPS[n])
-            pad_arr = ((0, pad_size), (0, pad_size), (0, 0))
+            # num_patches = int((original_size - p_size) / SAMPLING_GAPS[n] + 1)	
+            # pad_size = p_size - (original_size  - num_patches * SAMPLING_GAPS[n])
+            pad_arr = ((0, p_size), (0, p_size), (0, 0))
             # pad all inputs
             current_style = pad(style_layers[L], pad_arr, mode='edge')
             current_seg = pad(seg_layers[L].reshape(seg_layers[L].shape[0], seg_layers[L].shape[1], 1), pad_arr, mode='edge')
             current_content = pad(content_layers[L], pad_arr, mode='edge')
             X = pad(X, pad_arr, mode='edge')
+            const1 = pad(fus_const1[L], pad_arr, mode=PADDING_MODE)
+            const2 = pad(fus_const2[L], pad_arr, mode=PADDING_MODE)
             
             # Extracting Style patches and computing nearest neighbors
             style_patches = extract_patches_2d(current_style, patch_size=(p_size, p_size))
@@ -133,8 +148,8 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
             style_features = style_patches.reshape(-1, p_size * p_size * 3)
             projection_matrix = 0
             # for small patch sizes perform PCA
-            if p_size <= 33:
-                n_comp = min(100,style_features.shape[0])
+            if p_size <= 21:
+                n_comp = min(25,style_features.shape[0])
                 proj_style_features = PCA (n_components=n_comp, svd_solver='auto').fit_transform(style_features)
                 neighbors = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(proj_style_features )
             else:
@@ -150,7 +165,7 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
                 X_patches = extract_patches_2d(X, patch_size=(p_size, p_size))
                 # Sub Sampling
                 X_patches = X_patches[::SAMPLING_GAPS[n], :, :]
-                X = IRLS(X, X_patches, style_patches, neighbors, IRLS_it, SAMPLING_GAPS[n], IRLS_r, p_size , projection_matrix)
+                X = IRLS(X, X_patches, style_patches, neighbors, IRLS_it, SAMPLING_GAPS[n], IRLS_r, p_size)
                 
                 # Step 3: Content Fusion
                 X = (1.0 / (content_weight * current_seg + 1)) * (X + (content_weight * current_seg * current_content))
@@ -159,10 +174,13 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
                 X = color_transfer_histogram(X, current_style)
                 
                 # Step 5: Denoising
-                X = denoise(X, sigma_r, sigma_s)
+                X = denoise(X, sigma_r, sigma_s ,3 )
                 
             # Original size
             X = X[:original_size, :original_size, :]
+            X = X.astype(np.float32) / 255.0
+            show_images([X])
+            
             
             
         # Upsample X to the next level of the pyramid
@@ -178,13 +196,10 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.4, sigma_s=10):
     return X
 
 
-
-
-
 # Read content and style images
-def main(segmentation_mode = 'kmeans' , color_transfer_mode = 'histogram' , denoise_flag = True):
-    content_img = io.imread('input/content/house2small.jpg')
-    style_img = io.imread('input/style/derschrei.jpg')
+def main(segmentation_mode = 'watershed' , color_transfer_mode = 'histogram' , denoise_flag = True):
+    content_img = io.imread('input/content/eagles.jpg')
+    style_img = io.imread('input/style/van_gogh.jpg')
     
     # Segmentation Modes (Kmeans is Default)
     if segmentation_mode == 'watershed':

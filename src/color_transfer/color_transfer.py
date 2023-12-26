@@ -2,49 +2,44 @@ import cv2
 import numpy as np 
 
 def color_transfer_histogram(content_img, style_img):
-    """ Transfers the color distribution from style image to content image using histogram matching.
-    Args:
-        content_img : BGR content image
-        style_img : BGR style image
-    Returns:
-        transferred_img : BGR content image with color distribution of style image 
     """
-    # Convert to uint8
-    content_img = content_img.astype(np.uint8)
-    style_img = style_img.astype(np.uint8)
+        Transfer the color of the style image to the content image using histogram matching.
+        Args:
+            content_img: RGB image to transfer its color.
+            style_img: RGB image to transfer its color.
+        Returns:
+            tramsfered: RGB image represents the content image with the style image color.
     
-    # Convert BGR to RGB
-    content_img = cv2.cvtColor(content_img, cv2.COLOR_BGR2RGB)
-    style_img = cv2.cvtColor(style_img, cv2.COLOR_BGR2RGB)
-
-    # Flatten images to 1-D array so that we can calculate histograms
-    content_hist, _ = np.histogram(content_img.reshape(-1, 3), bins=256, range=(0, 256))
-    style_hist, _ = np.histogram(style_img.reshape(-1, 3), bins=256, range=(0, 256))
-
-    # Calculate cumulative distribution function (CDF) and normalize it
-    content_cdf = content_hist.cumsum() / content_hist.sum()
-    style_cdf = style_hist.cumsum() / style_hist.sum()
-
-    # Calculate transfer_table from style_cdf to content_cdf
-    # It interpolates values of style_cdf so that it matches the values of content_cdf
-    transfer_table = np.interp(content_cdf, style_cdf, range(256))
-
-    # Apply transfer_table to content image
-    # For example, if content_img[0, 0] is 100, then transferred_img[0, 0] will be transfer_table[100]
-    # Convert to uint8 as cv2.cvtColor expects a uint8 array as input
-    transferred_img_flat = transfer_table[content_img.reshape(-1)].astype(np.uint8)
-
-    # Reshape transferred_img to its original shape
-    transferred_img = transferred_img_flat.reshape(content_img.shape)
-
-    # Convert back to BGR
-    transferred_img = cv2.cvtColor(transferred_img, cv2.COLOR_RGB2BGR)
+    """
+    transfered = np.copy(content_img)
     
-    # Clip values to be between 0 and 255
-    transferred_img = np.clip(transferred_img, 0, 255)
-    
+    # Loop over the image channels
+    for i in range(content_img.shape[2]):
+        content_channel = content_img[:, :, i].flatten()
+        style_channel = style_img[:, :, i].flatten()
+        
+        content_channel = content_channel.astype(np.int64)
+        style_channel = style_channel.astype(np.int64)
 
-    return transferred_img
+        # Calculate histograms
+        content_hist = np.bincount(content_channel, minlength=256)
+        style_hist = np.bincount(style_channel, minlength=256)
+
+        # Calculate cumulative histograms
+        content_cumhist = np.cumsum(content_hist)
+        style_cumhist = np.cumsum(style_hist)
+        
+        # Normalize cumulative histograms
+        content_cumhist = content_cumhist / content_cumhist[-1]
+        style_cumhist = style_cumhist / style_cumhist[-1]
+
+        # Calculate transfer function
+        # The transfer function is calculated by finding the closest pixel values between the cumulative histograms of the content and style images.
+        matched = np.interp(content_cumhist, style_cumhist, np.arange(256))
+        transfered[:, :, i] = matched[content_channel].reshape(content_img[:, :, i].shape).astype(np.uint8)
+
+        
+    return transfered
 
 
 def img_stats(img):
@@ -78,9 +73,10 @@ def color_transfer_lab(content_img, style_img):
     # Why LAB color space?
     # LAB color space tends to decorrelate color information, which means that the color channels are less correlated with each other. 
     # This decorrelation simplifies the process of treating color channels separately during color transfer.
-    
-    content_img = cv2.cvtColor(content_img, cv2.COLOR_BGR2LAB)
-    style_img = cv2.cvtColor(style_img, cv2.COLOR_BGR2LAB)
+
+    # Convert images to LAB color space
+    content_img = cv2.cvtColor(content_img, cv2.COLOR_RGB2LAB)
+    style_img = cv2.cvtColor(style_img, cv2.COLOR_RGB2LAB)
     
     # Calculate mean and standard deviation of content image and style image
     content_mean, content_std = img_stats(content_img)
@@ -94,7 +90,9 @@ def color_transfer_lab(content_img, style_img):
     transferred_img = np.clip(transferred_img, 0, 255)
     
     # Convert back to BGR
-    transferred_img = cv2.cvtColor(transferred_img.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    transferred_img = cv2.cvtColor(transferred_img.astype(np.uint8), cv2.COLOR_LAB2RGB)
+    
+    
     
     return transferred_img
 
