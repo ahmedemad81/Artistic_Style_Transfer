@@ -76,24 +76,21 @@ def color_transfer_lab(content_img, style_img):
     # This decorrelation simplifies the process of treating color channels separately during color transfer.
 
     # Convert images to LAB color space
-    content_img = cv2.cvtColor(content_img, cv2.COLOR_RGB2LAB)
-    style_img = cv2.cvtColor(style_img, cv2.COLOR_RGB2LAB)
+    content_img = cv2.cvtColor(content_img.astype(np.float32), cv2.COLOR_BGR2LAB)
+    style_img = cv2.cvtColor(style_img.astype(np.float32), cv2.COLOR_BGR2LAB)
     
     # Calculate mean and standard deviation of content image and style image
     content_mean, content_std = img_stats(content_img)
     style_mean, style_std = img_stats(style_img)
     
     # Transfer color distribution from style image to content image by the following formula:
-    transferred_img = ((content_img - content_mean) / (content_std)) * style_std + style_mean
+    transferred_img = (content_img - content_mean) # Subtract mean of content image
+    transferred_img = transferred_img * style_std # Multiply by standard deviation of style image
+    transferred_img = transferred_img / content_std # Divide by standard deviation of content image
+    transferred_img = transferred_img + style_mean # Add mean of style image
 
-    # Clip values to be between 0 and 255
-    # Some pixels may have invalid values, such as negative values or values greater than 255.
-    transferred_img = np.clip(transferred_img, 0, 255)
-    
     # Convert back to BGR
-    transferred_img = cv2.cvtColor(transferred_img.astype(np.uint8), cv2.COLOR_LAB2RGB)
-    
-    
+    transferred_img = cv2.cvtColor(transferred_img.astype(np.float32), cv2.COLOR_LAB2BGR)
     
     return transferred_img
 
@@ -119,10 +116,25 @@ def color_transfer_mean_std(content_img, style_img):
     style_mean, style_std = img_stats(style_img)
     transferred_img = ((content_img - content_mean) / (content_std)) * style_std + style_mean
     
-    # Clip values to be between 0 and 255
-    transferred_img = np.clip(transferred_img, 0, 255)
-    
     # Convert to uint8
-    transferred_img = transferred_img.astype(np.uint8)
+    transferred_img = transferred_img.astype(np.float32)
     
     return transferred_img
+
+def color_transfer(content_img, style_img, type):
+    """
+    Transfers the color distribution from style image to content image.
+    
+    Args:
+        content_img: BGR content image
+        style_img: BGR style image
+        type: type of color transfer to be performed
+    Returns:
+        transferred_img: BGR content image with color distribution of style image 
+    """
+    if type == 'histogram':
+        return color_transfer_histogram(content_img, style_img)
+    elif type == 'lab':
+        return color_transfer_lab(content_img, style_img)
+    elif type == 'mean_std':
+        return color_transfer_mean_std(content_img, style_img)

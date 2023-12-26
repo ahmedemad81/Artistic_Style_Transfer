@@ -70,12 +70,12 @@ def canny_segmentation(img , sigma=2.5, filter_size=3 , closing_iterations=2 , d
     closing = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, filter, iterations=closing_iterations)
     
     # Dilate the edges
-    dilated = cv2.dilate(closing, filter, dilation_iterations=dilation_iterations)
+    dilated = cv2.dilate(closing, filter, iterations=dilation_iterations)
     
     # Fill holes
     filled = ndimage.binary_fill_holes(dilated)
 
-    return filled
+    return filled.astype(np.float32)
 
 def kmeans_segmentation(img, k=2):
     """
@@ -157,3 +157,4 @@ def otsu_segmentation_binary_mask(img):
     inverted_mask = cv2.bitwise_not(binary_mask)
 
     return inverted_mask
+

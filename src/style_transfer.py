@@ -8,7 +8,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.decomposition import PCA
 import skimage.io as io
 import matplotlib.pyplot as plt
-from color_transfer.color_transfer import color_transfer_histogram, color_transfer_lab, color_transfer_mean_std
+from color_transfer.color_transfer import color_transfer
 from segmentation.segmentation import kmeans_segmentation, watershed_segmentation, canny_segmentation, otsu_segmentation_binary_mask
 from utils.irls import IRLS
 from denoise.denoise import denoise
@@ -89,7 +89,7 @@ def build_gaussian_pyramid(img, L):
         img_arr.append(cv2.pyrDown(img_arr[-1].astype(np.float32)).astype(np.float32))
     return img_arr
 
-def style_transfer(content, style, segmentation_mask, sigma_r=0.5, sigma_s=10):
+def style_transfer(content, style, segmentation_mask, color_transfer_mode = "histogram" , sigma_r=0.7, sigma_s=5):
     """
     Performs style transfer between content and style images.
     Args:
@@ -127,10 +127,7 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.5, sigma_s=10):
     for L in range(LMAX):
         print('Scale ', L)
         # Add some extra noise to the output
-        if L == LMAX-1:
-            X = random_noise(X, mode='gaussian', var=50)
-        else:
-            X = random_noise(X, mode='gaussian', var=0.01)
+        X = random_noise(X, mode='gaussian', var=0.01)
         
 
         for n in range(PATCH_SIZES.size):
@@ -173,7 +170,7 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.5, sigma_s=10):
                 #robust patch matching
                 IRLS(X,z,IRLS_r,IRLS_it,(p_size,p_size,3),s_size)
                 # Color Transfer
-                X = color_transfer_histogram(X, current_style)
+                X = color_transfer(X, current_style, color_transfer_mode)
                 # Content Fusion
                 X = (1.0 / (content_weight * current_seg + 1)) * (X + (content_weight * current_seg * current_content))
                 # Denoising
@@ -200,12 +197,11 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.5, sigma_s=10):
 def main(segmentation_mode = 'watershed' , color_transfer_mode = 'histogram'):
     content_img = io.imread('input/content/eagles.jpg').astype(np.float32)/255.0
     style_img = io.imread('input/style/van_gogh.jpg').astype(np.float32)/255.0
-    
     # Segmentation Modes (Kmeans is Default)
     if segmentation_mode == 'watershed':
         segm_mask = watershed_segmentation((content_img*255).astype(np.uint8))
     elif segmentation_mode == 'canny':
-        segm_mask = canny_segmentation((content_img*255).astype(np.uint8))
+        segm_mask = canny_segmentation((content_img*255).astype(np.uint8), sigma=6, filter_size=3 , closing_iterations=2 , dilation_iterations=4)
     elif segmentation_mode == 'otsu':
         segm_mask = otsu_segmentation_binary_mask((content_img*255).astype(np.uint8))
     else:
@@ -218,18 +214,14 @@ def main(segmentation_mode = 'watershed' , color_transfer_mode = 'histogram'):
     original_content = content_img.copy()
     
     # Color Transfer Modes (Histogram is Default)
-    if color_transfer_mode == 'lab':
-        content_img = color_transfer_lab(content_img, style)
-    elif color_transfer_mode == 'mean_std':
-        content_img = color_transfer_mean_std(content_img, style)
-    else:
-        content_img = color_transfer_histogram(content_img, style)
+    content_img = color_transfer(content_img, style, color_transfer_mode)
+    
     
     show_images([original_content, segm_mask, style ,content_img])
     
     # Style Transfer
     start = time.time()
-    X = style_transfer(content_img, style, segm_mask)
+    X = style_transfer(content_img, style, segm_mask , color_transfer_mode)
     end = time.time()
     print("Style Transfer took ", end - start, " seconds!")
     # Finished. Just show the images
