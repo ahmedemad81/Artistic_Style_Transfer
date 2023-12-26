@@ -13,17 +13,40 @@ from segmentation.segmentation import kmeans_segmentation, watershed_segmentatio
 from utils.irls import IRLS
 from denoise.denoise import denoise
 from timeit import default_timer
+from skimage.restoration import denoise_bilateral
+from patchify import patchify
+from utils.pca import pca
+
 
 
 LMAX = 3
 IMG_SIZE = 400
-PATCH_SIZES = np.array([33, 21, 13])
-SAMPLING_GAPS = np.array([28, 18, 9])
-IALG = 3
-IRLS_it = 8
+PATCH_SIZES = np.array([40 , 30 , 20 ,10])
+SAMPLING_GAPS = np.array([20,15,10 ,5])
+IALG = 5
+IRLS_it = 3
 IRLS_r = 0.8
 PADDING_MODE = 'edge'
-content_weight = 0.8
+content_weight = 0.6
+
+def patch_matching (flatten_Xp, patch_size, subsampling_gap, flatten_style_patches, nn_model, xp_shape):
+    z = []
+    sc = 0
+    for Xpatch in flatten_Xp:
+        flatten_Xpp = [Xpatch]
+
+        if patch_size >= 21 :
+            unflattened_Xp=Xpatch.reshape(patch_size, patch_size, 3)
+            if(sc%xp_shape[0]):
+                unflattened_Xp[:,:patch_size-subsampling_gap,:]=z[sc-1][:,-(patch_size-subsampling_gap):,:]
+            if(sc>=xp_shape[1]):
+                unflattened_Xp[:patch_size-subsampling_gap,:,:]=z[sc-xp_shape[1]][-(patch_size-subsampling_gap):,:,:]
+            flatten_Xpp = unflattened_Xp.reshape(-1, patch_size * patch_size * 3)
+            sc+=1
+
+        flatten_neighbour_patch = flatten_style_patches[nn_model.kneighbors(flatten_Xpp)[1][0][0]]
+        z.append(flatten_neighbour_patch.reshape(patch_size, patch_size, 3))
+    return z
 
 # def mat2gray(image):
 #     # Ensure that the image is of type float
@@ -66,7 +89,7 @@ def build_gaussian_pyramid(img, L):
         img_arr.append(cv2.pyrDown(img_arr[-1].astype(np.float32)).astype(np.float32))
     return img_arr
 
-def style_transfer(content, style, segmentation_mask, sigma_r=0.77, sigma_s=40):
+def style_transfer(content, style, segmentation_mask, sigma_r=0.5, sigma_s=10):
     """
     Performs style transfer between content and style images.
     Args:
@@ -84,104 +107,81 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.77, sigma_s=40):
     """
     start_time = default_timer() # initialize the timer to measure performance
     ## Build gaussian pyramid
+    # Reverse the order of the layers so that the first layer is the smallest one 
     print("Building Pyramids ...")
     content_layers = []
     style_layers = []
     seg_layers = []
-    # content_layers.append(content)
-    # style_layers.append(style)
-    # seg_layers.append(segmentation_mask)
-    # for iter in range(LMAX-1, 0, -1):
-    #     content_layers.append(cv2.pyrDown(content_layers[-1].astype(np.float32)).astype(np.float32))
-    #     style_layers.append(cv2.pyrDown(style_layers[-1].astype(np.float32)).astype(np.float32))
-    #     seg_layers.append(cv2.pyrDown(seg_layers[-1].astype(np.float32)).astype(np.float32))    
     content_layers = build_gaussian_pyramid(content, LMAX)
     style_layers = build_gaussian_pyramid(style, LMAX)
     seg_layers = build_gaussian_pyramid(segmentation_mask, LMAX)
-    
-    
     content_layers.reverse()      
     style_layers.reverse()  
     seg_layers.reverse()  
     
+    # Intialize X with the content
+    X = np.copy(content_layers[0])
 
-    # Initialize X with the content + strong noise.
-    X = random_noise(content_layers[0], mode='gaussian', var=0.5)
-    # Set up Content Fusion constants.
-    fus_const1 = []
-    fus_const2 = []
-    for i in range(LMAX):
-        sx, sy = seg_layers[i].shape
-        curr_segm = seg_layers[i].reshape(sx, sy, 1)
-        fus_const1.append(curr_segm * content_layers[i])
-        fus_const2.append(1.0 / (curr_segm + 1))
-        
     # Starting the style transfer
-        
     print('Starting Style Transfer..')
     for L in range(LMAX):
         print('Scale ', L)
         # Add some extra noise to the output
-        X = random_noise(X, mode='gaussian', var=0.2)
+        if L == LMAX-1:
+            X = random_noise(X, mode='gaussian', var=50)
+        else:
+            X = random_noise(X, mode='gaussian', var=0.01)
+        
 
         for n in range(PATCH_SIZES.size):
             p_size = PATCH_SIZES[n]
+            s_size = SAMPLING_GAPS[n]
             print('Patch Size', p_size)
             
             # pad content, style, segmentation mask and X for correct style mapping
             original_size = style_layers[L].shape[0]
-            # num_patches = int((original_size - p_size) / SAMPLING_GAPS[n] + 1)	
-            # pad_size = p_size - (original_size  - num_patches * SAMPLING_GAPS[n])
-            pad_arr = ((0, p_size), (0, p_size), (0, 0))
-            # pad all inputs
-            current_style = pad(style_layers[L], pad_arr, mode='edge')
-            current_seg = pad(seg_layers[L].reshape(seg_layers[L].shape[0], seg_layers[L].shape[1], 1), pad_arr, mode='edge')
-            current_content = pad(content_layers[L], pad_arr, mode='edge')
-            X = pad(X, pad_arr, mode='edge')
-            const1 = pad(fus_const1[L], pad_arr, mode=PADDING_MODE)
-            const2 = pad(fus_const2[L], pad_arr, mode=PADDING_MODE)
-            
+            # Pad all inputs from right and bottom with p_size
+            current_style = pad(style_layers[L], ((0, p_size), (0, p_size), (0, 0)), mode=PADDING_MODE)
+            current_seg = pad(seg_layers[L].reshape(seg_layers[L].shape[0], seg_layers[L].shape[1], 1), ((0, p_size), (0, p_size), (0, 0)), mode=PADDING_MODE)
+            current_content = pad(content_layers[L], ((0, p_size), (0, p_size), (0, 0)), mode=PADDING_MODE)
+            X = pad(X, ((0, p_size), (0, p_size), (0, 0)), mode=PADDING_MODE)
+
             # Extracting Style patches and computing nearest neighbors
-            style_patches = extract_patches_2d(current_style, patch_size=(p_size, p_size))
-            # Sub Sampling
-            style_patches = style_patches[::SAMPLING_GAPS[n], :, :]
+            style_patches = patchify(current_style, (p_size, p_size, 3), step=s_size)
             style_features = style_patches.reshape(-1, p_size * p_size * 3)
-            projection_matrix = 0
+            projection_matrix = []
             # for small patch sizes perform PCA
             if p_size <= 21:
-                n_comp = min(25,style_features.shape[0])
-                proj_style_features = PCA (n_components=n_comp, svd_solver='auto').fit_transform(style_features)
-                neighbors = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(proj_style_features )
+                proj_style_features, projection_matrix = pca(style_features)
+                neighbors = NearestNeighbors(n_neighbors=1).fit(proj_style_features)
             else:
-                neighbors = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(style_features)
-            
-            # new_style_patches = PCA(n_components=0.95, svd_solver='full').fit_transform(style_patches)
-            # neighbors = NearestNeighbors(n_neighbors=1, p=2, n_jobs=njobs).fit(new_style_patches)
-            # new_style_patches = new_style_patches.reshape((-1, p_size, p_size, 3))
-            
+                neighbors = NearestNeighbors(n_neighbors=1).fit(style_features)
+
             for iter in range(IALG):
                 print("Iteration",iter," ...")
-                # Steps 1 & 2: Patch-Extraction and and Robust Patch Aggregation
-                X_patches = extract_patches_2d(X, patch_size=(p_size, p_size))
-                # Sub Sampling
-                X_patches = X_patches[::SAMPLING_GAPS[n], :, :]
-                X = IRLS(X, X_patches, style_patches, neighbors, IRLS_it, SAMPLING_GAPS[n], IRLS_r, p_size)
+                # Extracting X patches
+                z=[]
+                X_patches = patchify(X, (p_size, p_size, 3), step=s_size)
+                X_patches_flatten = X_patches.reshape((-1, p_size * p_size * 3))
                 
-                # Step 3: Content Fusion
-                X = (1.0 / (content_weight * current_seg + 1)) * (X + (content_weight * current_seg * current_content))
-                
-                # Step 4: Color Transfer
+                if (p_size <= 21):
+                    X_patches_flatten = X_patches_flatten - np.mean(X_patches_flatten, axis=0)
+                    X_patches_flatten = np.matmul(X_patches_flatten, projection_matrix.T)
+                    
+                # Patch Matching
+                z = patch_matching(X_patches_flatten, p_size, s_size, style_features, neighbors, X_patches.shape)
+                #robust patch matching
+                IRLS(X,z,IRLS_r,IRLS_it,(p_size,p_size,3),s_size)
+                # Color Transfer
                 X = color_transfer_histogram(X, current_style)
+                # Content Fusion
+                X = (1.0 / (content_weight * current_seg + 1)) * (X + (content_weight * current_seg * current_content))
+                # Denoising
+                X = denoise(X, sigma_r, sigma_s)
                 
-                # Step 5: Denoising
-                X = denoise(X, sigma_r, sigma_s ,3 )
                 
             # Original size
             X = X[:original_size, :original_size, :]
-            X = X.astype(np.float32) / 255.0
-            show_images([X])
-            
-            
             
         # Upsample X to the next level of the pyramid
         if (L != LMAX-1):    
@@ -197,19 +197,19 @@ def style_transfer(content, style, segmentation_mask, sigma_r=0.77, sigma_s=40):
 
 
 # Read content and style images
-def main(segmentation_mode = 'watershed' , color_transfer_mode = 'histogram' , denoise_flag = True):
-    content_img = io.imread('input/content/eagles.jpg')
-    style_img = io.imread('input/style/van_gogh.jpg')
+def main(segmentation_mode = 'watershed' , color_transfer_mode = 'histogram'):
+    content_img = io.imread('input/content/eagles.jpg').astype(np.float32)/255.0
+    style_img = io.imread('input/style/van_gogh.jpg').astype(np.float32)/255.0
     
     # Segmentation Modes (Kmeans is Default)
     if segmentation_mode == 'watershed':
-        segm_mask = watershed_segmentation(content_img)
+        segm_mask = watershed_segmentation((content_img*255).astype(np.uint8))
     elif segmentation_mode == 'canny':
-        segm_mask = canny_segmentation(content_img)
+        segm_mask = canny_segmentation((content_img*255).astype(np.uint8))
     elif segmentation_mode == 'otsu':
-        segm_mask = otsu_segmentation_binary_mask(content_img)
+        segm_mask = otsu_segmentation_binary_mask((content_img*255).astype(np.uint8))
     else:
-        segm_mask = kmeans_segmentation(content_img)
+        segm_mask = kmeans_segmentation((content_img*255).astype(np.uint8))
         
         
     content_img = (cv2.resize(content_img, (IMG_SIZE, IMG_SIZE)))

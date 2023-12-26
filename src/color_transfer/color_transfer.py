@@ -11,15 +11,16 @@ def color_transfer_histogram(content_img, style_img):
             tramsfered: RGB image represents the content image with the style image color.
     
     """
-    transfered = np.copy(content_img)
+    content_img = (content_img*255.0)
+    style_img = (style_img*255.0)
     
     # Loop over the image channels
     for i in range(content_img.shape[2]):
         content_channel = content_img[:, :, i].flatten()
         style_channel = style_img[:, :, i].flatten()
         
-        content_channel = content_channel.astype(np.int64)
-        style_channel = style_channel.astype(np.int64)
+        content_channel = content_channel.astype(np.uint8)
+        style_channel = style_channel.astype(np.uint8)
 
         # Calculate histograms
         content_hist = np.bincount(content_channel, minlength=256)
@@ -36,10 +37,10 @@ def color_transfer_histogram(content_img, style_img):
         # Calculate transfer function
         # The transfer function is calculated by finding the closest pixel values between the cumulative histograms of the content and style images.
         matched = np.interp(content_cumhist, style_cumhist, np.arange(256))
-        transfered[:, :, i] = matched[content_channel].reshape(content_img[:, :, i].shape).astype(np.uint8)
+        content_img[:, :, i] = matched[content_channel].reshape(content_img[:, :, i].shape).astype(np.uint8)
 
         
-    return transfered
+    return (content_img/255.0).astype(np.float32)
 
 
 def img_stats(img):
