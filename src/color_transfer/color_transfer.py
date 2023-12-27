@@ -138,5 +138,5 @@ def color_transfer(content_img, style_img, type):
         return color_transfer_histogram(content_img, style_img)
     elif type == 'lab':
         return color_transfer_lab(content_img, style_img)
-    elif type == 'mean_std':
+    elif type == 'mean':
         return color_transfer_mean_std(content_img, style_img)

@@ -40,7 +40,7 @@ def watershed_segmentation(img , closing_iterations=2 , dilation_iterations=3):
     
     return dilated
 
-def canny_segmentation(img , sigma=2.5, filter_size=3 , closing_iterations=2 , dilation_iterations=4):
+def canny_segmentation(img , sigma=2, filter_size=3 , closing_iterations=2 , dilation_iterations=4):
     """
     Segments the image using Canny edge detector
     Args:
