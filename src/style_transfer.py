@@ -14,9 +14,8 @@ from timeit import default_timer
 from patchify import patchify
 from utils.pca import pca
 
-
-
-LMAX = 3
+# Original Parameters
+LMAX = 3 
 IMG_SIZE = 400
 PATCH_SIZES = np.array([33 ,21 , 13 , 9])
 SAMPLING_GAPS = np.array([28 , 18 , 8 , 5])
@@ -61,7 +60,7 @@ def build_gaussian_pyramid(img, L):
         img_arr.append(cv2.pyrDown(img_arr[-1].astype(np.float32)).astype(np.float32))
     return img_arr
 
-def style_transfer(content, style, segmentation_mask, color_transfer_mode = "histogram" , sigma_r=0.05, sigma_s=10):
+def style_transfer(content, style, segmentation_mask, color_transfer_mode = "histogram" , sigma_r=0.05, sigma_s=10 , LMAX = 3 , PATCH_SIZES = PATCH_SIZES , SAMPLING_GAPS = SAMPLING_GAPS , IALG = IALG , IRLS_it = IRLS_it , IRLS_r = IRLS_r):
     """
     Performs style transfer between content and style images.
     Args:
@@ -174,37 +173,39 @@ def style_transfer(content, style, segmentation_mask, color_transfer_mode = "his
 
 
 # Read content and style images
-def main(segmentation_mode = 'watershed' , color_transfer_mode = 'lab'):
-    content_img = io.imread('input/content/n.jpg').astype(np.float32)/255.0
-    style_img = io.imread('input/style/style2.jpeg').astype(np.float32)/255.0
+def main( content_path, style_path , sigma_r , sigma_s , canny_sigma , canny_filter_size , closing_iterations , dilation_iterations , kmean_k  ,segmentation_mode = 'watershed' , color_transfer_mode = 'histogram' , LMAX = LMAX , PATCH_SIZES = PATCH_SIZES , SAMPLING_GAPS = SAMPLING_GAPS , IALG = IALG , IRLS_it = IRLS_it , IRLS_r = IRLS_r ):
+    content_img = io.imread(content_path).astype(np.float32)/255.0
+    style_img = io.imread(style_path).astype(np.float32)/255.0
     # Segmentation Modes (Kmeans is Default)
     if segmentation_mode == 'watershed':
-        segm_mask = watershed_segmentation((content_img*255).astype(np.uint8))
+        segm_mask = watershed_segmentation((content_img*255).astype(np.uint8) , closing_iterations, dilation_iterations)
     elif segmentation_mode == 'canny':
-        segm_mask = canny_segmentation((content_img*255).astype(np.uint8), sigma=1, filter_size=3 , closing_iterations=2 , dilation_iterations=4)
+        segm_mask = canny_segmentation((content_img*255).astype(np.uint8), canny_sigma, canny_filter_size , closing_iterations , dilation_iterations)
     elif segmentation_mode == 'otsu':
         segm_mask = otsu_segmentation_binary_mask((content_img*255).astype(np.uint8))
     else:
-        segm_mask = kmeans_segmentation((content_img*255).astype(np.uint8))
+        segm_mask = kmeans_segmentation((content_img*255).astype(np.uint8) , kmean_k)
         
         
     content_img = (cv2.resize(content_img, (IMG_SIZE, IMG_SIZE)))
     style = (cv2.resize(style_img, (IMG_SIZE, IMG_SIZE)))
     segm_mask = (cv2.resize(segm_mask, (IMG_SIZE, IMG_SIZE)))
-    original_content = content_img.copy()
     
     # Color Transfer Modes (Histogram is Default)
     content_img = color_transfer(content_img, style, color_transfer_mode)
     
-    show_images ([original_content , content_img , style , segm_mask] , ["Original Content" , "Color Transfered Content" , "Style" , "Segmentation Mask"])
+    # show_images ([original_content , content_img , style , segm_mask] , ["Original Content" , "Color Transfered Content" , "Style" , "Segmentation Mask"])
     # Style Transfer
     start = time.time()
-    X = style_transfer(content_img, style, segm_mask , color_transfer_mode)
+    X = style_transfer(content_img, style, segm_mask , color_transfer_mode , sigma_r , sigma_s , LMAX , PATCH_SIZES , SAMPLING_GAPS , IALG , IRLS_it , IRLS_r)
     end = time.time()
-    print("Style Transfer took ", end - start, " seconds!")
+    time_taken = end - start
+    print("Style Transfer took ", time_taken, " seconds!")
     # Finished. Just show the images
     
-    show_images([X])
+    return X , time_taken
     
 if __name__ == "__main__":
-    main()
+    stylized_img , time_taken = main ( content_path = './input/content/eagles.jpg' , style_path = './input/style/derschrei.jpg' , sigma_r = 0.05 , sigma_s = 10 , canny_sigma = 0.5 , canny_filter_size = 3 , closing_iterations = 3 , dilation_iterations = 3 , kmean_k = 2 , segmentation_mode = 'watershed' , color_transfer_mode = 'histogram' , LMAX = LMAX , PATCH_SIZES = PATCH_SIZES , SAMPLING_GAPS = SAMPLING_GAPS , IALG = IALG , IRLS_it = IRLS_it , IRLS_r = IRLS_r)
+    show_images([stylized_img] , ["Stylized Image"])
+    print("Time taken = ", time_taken , " seconds")
