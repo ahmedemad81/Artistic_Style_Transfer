@@ -21,8 +21,8 @@ from utils.pca import pca
 
 LMAX = 3
 IMG_SIZE = 400
-PATCH_SIZES = np.array([40 , 30 , 20 ,10])
-SAMPLING_GAPS = np.array([20,15,10 ,5])
+PATCH_SIZES = np.array([40, 30 , 20 , 10])
+SAMPLING_GAPS = np.array([20, 15, 10 ,5])
 IALG = 5
 IRLS_it = 3
 IRLS_r = 0.8
@@ -37,14 +37,20 @@ def patch_matching (flatten_Xp, patch_size, subsampling_gap, flatten_style_patch
 
         if patch_size >= 21 :
             unflattened_Xp=Xpatch.reshape(patch_size, patch_size, 3)
+            
+            # During the patch matching process, to ensure continuity between adjacent patches and avoid visible seams in the final image, 
+            # the algorithm copies the overlapping pixels from the previous patch to the current patch.
+            # This is done for both the horizontal and vertical directions, ensuring continuity in both the rows and columns of patches. 
             if(sc%xp_shape[0]):
                 unflattened_Xp[:,:patch_size-subsampling_gap,:]=z[sc-1][:,-(patch_size-subsampling_gap):,:]
             if(sc>=xp_shape[1]):
                 unflattened_Xp[:patch_size-subsampling_gap,:,:]=z[sc-xp_shape[1]][-(patch_size-subsampling_gap):,:,:]
             flatten_Xpp = unflattened_Xp.reshape(-1, patch_size * patch_size * 3)
+            
             sc+=1
-
-        flatten_neighbour_patch = flatten_style_patches[nn_model.kneighbors(flatten_Xpp)[1][0][0]]
+        #The kneighbors function returns two arrays: one for the distances to the nearest neighbors, and one for the indices of the nearest neighbors.
+        #The first element of the second array is the index of the nearest neighbor.
+        flatten_neighbour_patch = flatten_style_patches[nn_model.kneighbors(flatten_Xpp)[1][0][0]] #destructuring the array to get the first element
         z.append(flatten_neighbour_patch.reshape(patch_size, patch_size, 3))
     return z
 
@@ -113,6 +119,14 @@ def style_transfer(content, style, segmentation_mask, color_transfer_mode = "his
     style_layers = []
     seg_layers = []
     content_layers = build_gaussian_pyramid(content, LMAX)
+    # `style_layers` is a list that stores the style images at different scales. It is used in the
+    # style transfer process to extract style patches and compute nearest neighbors for patch
+    # matching. The style layers are built by downsampling the original style image using the
+    # `cv2.pyrDown` function.
+    # `style_layers` is a list that stores the style images at different scales. It is used in the
+    # style transfer process to extract style patches and compute nearest neighbors for patch
+    # matching. The style layers are built by downsampling the original style image using the
+    # `cv2.pyrDown` function.
     style_layers = build_gaussian_pyramid(style, LMAX)
     seg_layers = build_gaussian_pyramid(segmentation_mask, LMAX)
     content_layers.reverse()      
