@@ -8,7 +8,7 @@ def color_transfer_histogram(content_img, style_img):
             content_img: RGB image to transfer its color.
             style_img: RGB image to transfer its color.
         Returns:
-            tramsfered: RGB image represents the content image with the style image color.
+            transferred: RGB image represents the content image with the style image color.
     
     """
     content_img = (content_img*255.0)
@@ -38,8 +38,10 @@ def color_transfer_histogram(content_img, style_img):
         # The transfer function is calculated by finding the closest pixel values between the cumulative histograms of the content and style images.
         matched = np.interp(content_cumhist, style_cumhist, np.arange(256))
         content_img[:, :, i] = matched[content_channel].reshape(content_img[:, :, i].shape).astype(np.uint8)
-
         
+
+    content_img = np.clip(content_img, 0, 255)
+    
     return (content_img/255.0).astype(np.float32)
 
 

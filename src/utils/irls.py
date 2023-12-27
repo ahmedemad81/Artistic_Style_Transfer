@@ -1,93 +1,32 @@
 import numpy as np
-from sklearn.feature_extraction.image import extract_patches_2d
-from sklearn.decomposition import PCA
 from patchify import patchify
 
-# def IRLS(X, X_patches, style_patches, neighbors, iterations , sub_sampling , r , p_size ,projection_matrix ):
-#     """
-#     Performs IRLS robust optimization between content and style patches.
-#     Args:
-#         X: Content before optimization 
-#         X_patches: Content patches (2D Patches)
-#         style_patches: Style patches (2D Patches)
-#         neighbors: Number of neighbors to consider
-#         patch_size: Size of patch
-#         iterations: Number of iterations
-#         sub_sampling: Sub sampling gap between patches
-#         r: Robust statistic value
-#     Returns:
-#         X: Estimated X after IRLS optimization
-#     """
-#     for i in range(iterations):
-#         print('Iteration ', i)
-#         current_size = X.shape[0]
-#         # Extracting X patches
-#         X_patches_raw = patchify(X, (p_size, p_size, 3), step=sub_sampling)
-#         X_patches = X_patches.reshape((-1, X_patches.shape[1] * X_patches.shape[2] * 3))
-#         # PCA Projection
-#         if p_size <= 21:
-#             X_patches = X_patches - np.mean(X_patches, axis=0)
-#             X_patches = np.matmul(X_patches, projection_matrix.T)
-            
-#         style_patches_iter = style_patches # Style patches for current iteration
-#         style_patches_iter = style_patches_iter.reshape((-1, style_patches.shape[1] *  style_patches.shape[2] * 3))
-        
-#         # X_patches = PCA(n_components=0.95, svd_solver='full').fit_transform(X_patches)
-#         # X_patches = X_patches.reshape((-1, p_size, p_size, 3))
-#         # Computing Nearest Neighbors
-#         distances, indices = neighbors.kneighbors(X_patches)
-#         distances += 0.0001
-#         # Computing Weights
-#         weights = np.power(distances, r - 2 )
-#         # Patch Accumulation
-#         R = np.zeros((current_size, current_size, 3), dtype=np.float32)
-#         Rp = patchify(R, (p_size, p_size, 3), step=sub_sampling)
-#         X[:] = 0
-#         t = 0
-#         for j in range(0, current_size - p_size + 1, sub_sampling):
-#             for k in range(0, current_size - p_size + 1, sub_sampling):
-#                 nearest_neighbor_patch = style_patches_iter[indices[t]]
-#                 nearest_neighbor_patch = nearest_neighbor_patch.reshape((p_size, p_size, 3))
-#                 X = X.astype(np.float32)
-#                 weights = weights.astype(np.float32)
-#                 X[j:j + p_size, k:k + p_size, :] += nearest_neighbor_patch * weights[t]
-#                 Rp[j:j + p_size, k:k + p_size, :] += weights[t]
-#                 t += 1
-        
-#         R = R.astype(np.float32)
-#         X = X.astype(np.float32)
-        
+def IRLS(X, matched_patches, iterations , sub_sampling , r , p_size):
+    """
+    Performs IRLS robust optimization between content and style patches.
+    Args:
+        X: Content image
+        matched_patches: Matched patches from style image
+        iterations: Number of iterations
+        sub_sampling: Sub sampling factor
+        r: r parameter
+        p_size: Patch size
+    Returns:
+        X: Estimated X after IRLS optimization
+    """
+    X_patches = patchify(X, (p_size, p_size, 3), sub_sampling)
+    patch_num = X_patches.shape[0]
+    num_of_patches = patch_num * patch_num
+    W = np.ones((num_of_patches, 1))  # Initialize weights with ones
+    
+    for _ in range(iterations):
+        for x in range (patch_num):
+            for y in range (patch_num):
+                min_dist_patch =  matched_patches[x * patch_num + y] - X_patches[x, y, 0, :, :, :] # Compute the difference between the patch and the matched patch
+                norm = np.linalg.norm(min_dist_patch)# Compute the norm of the difference
+                W[x * patch_num + y] = np.power(norm, r - 2) # Compute the weight of the patch
+                # Update the patch using the weighted difference between the patch and the matched patch
+                X_patches[x, y, 0, :, :, :] +=  (min_dist_patch) * W[x * patch_num + y]
                 
-#         R += 0.0001  # to avoid dividing by zero.
-#         X /= R
-        
-#     return X
+    return X
 
-from patchify import patchify
-import numpy as np
-
-
-def IRLS(X,z,r,Iirls,patch_size,subsampling_gap):
-    Xp=patchify(X,patch_size,subsampling_gap)
-    num_of_patches=(np.shape(Xp)[0])*(np.shape(Xp)[1])
-    w=(np.ones((num_of_patches,1)))
-    # z should be initialized with patch matching
-    # print(num_of_patches)
-    for i in range(0, Iirls):
-        for x in range(0, np.shape(Xp)[0]):
-            for y in range(0,np.shape(Xp)[1]):
-                e=Xp[x,y,0,:,:,:]-z[x*np.shape(Xp)[1]+y]
-                e2=np.sum(e**2)**0.5+0.00001
-                w[x*np.shape(Xp)[1]+y]=(e2**(r-2))
-                Xp[x,y,0,:,:,:]+=(z[x*np.shape(Xp)[1]+y]-Xp[x,y,0,:,:,:])*w[x*np.shape(Xp)[1]+y]
-                overlap=patch_size[0]-subsampling_gap
-                avgx=np.copy(Xp[x,y,0,:overlap,:,:])
-                avgy=np.copy(Xp[x,y,0,:,:overlap,:])
-                if(x>0 and overlap>0):
-                    avgx+=Xp[x-1,y,0,-overlap:,:,:]
-                    avgx/=2.0
-                if(y>0 and overlap>0):
-                    avgy+=Xp[x,y-1,0,:,-overlap:,:]
-                    avgy/=2.0
-                Xp[x,y,0,:overlap,:,:]=avgx
-                Xp[x,y,0,:,:overlap,:]=avgy
