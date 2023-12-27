@@ -146,7 +146,7 @@ color_transfer_mode_label.grid(row=1, column=6, padx=10, pady=20)
 
 L_max = ctk.CTkEntry(app, textvariable=L_max, font=("Arial", 15))
 L_max.grid(row=3, column=5, padx=10, pady=20)
-L_max_label = ctk.CTkLabel(app, text="Guassian Pyramid", font=("Arial", 15))
+L_max_label = ctk.CTkLabel(app, text="Gaussian Pyramid", font=("Arial", 15))
 L_max_label.grid(row=3, column=4, padx=10, pady=20)
 
 
